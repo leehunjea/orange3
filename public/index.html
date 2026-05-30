@@ -1,0 +1,608 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Orange3 Model Predictor</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Noto+Sans+KR:wght@300;400;600;700&display=swap');
+
+:root {
+  --bg:       #0d1117;
+  --surface:  #161b22;
+  --surface2: #1f2937;
+  --border:   #30363d;
+  --accent:   #f97316;
+  --blue:     #3b82f6;
+  --green:    #10b981;
+  --text:     #e6edf3;
+  --muted:    #8b949e;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { background: var(--bg); color: var(--text); font-family: 'Noto Sans KR', sans-serif; min-height: 100vh; }
+
+/* ── Layout ── */
+.app { display: grid; grid-template-columns: 340px 1fr; min-height: 100vh; }
+.sidebar { background: var(--surface); border-right: 1px solid var(--border); padding: 24px; display: flex; flex-direction: column; gap: 20px; }
+.main { padding: 24px; display: flex; flex-direction: column; gap: 20px; overflow-y: auto; }
+@media (max-width: 860px) { .app { grid-template-columns: 1fr; } }
+
+/* ── Header ── */
+.logo { display: flex; align-items: center; gap: 12px; padding-bottom: 20px; border-bottom: 1px solid var(--border); }
+.logo-icon { width: 40px; height: 40px; background: linear-gradient(135deg, var(--accent), #fb923c); border-radius: 10px; display: flex; align-items: center; justify-content: center; font-size: 20px; box-shadow: 0 0 16px rgba(249,115,22,0.3); flex-shrink:0; }
+.logo h1 { font-size: 15px; font-weight: 700; line-height: 1.3; }
+.logo p  { font-size: 11px; color: var(--muted); margin-top: 1px; }
+
+/* ── Upload zone ── */
+.upload-zone {
+  border: 2px dashed var(--border);
+  border-radius: 12px;
+  padding: 24px 16px;
+  text-align: center;
+  cursor: pointer;
+  transition: all 0.2s;
+  position: relative;
+}
+.upload-zone:hover, .upload-zone.drag { border-color: var(--accent); background: rgba(249,115,22,0.05); }
+.upload-zone input { position: absolute; inset: 0; opacity: 0; cursor: pointer; width: 100%; }
+.upload-icon { font-size: 28px; margin-bottom: 8px; }
+.upload-zone h3 { font-size: 13px; font-weight: 600; }
+.upload-zone p  { font-size: 11px; color: var(--muted); margin-top: 4px; }
+.upload-zone.loaded { border-color: var(--green); background: rgba(16,185,129,0.05); }
+
+/* ── Model Badge ── */
+.model-badge {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px 14px;
+  font-size: 12px;
+  display: none;
+}
+.model-badge.show { display: block; }
+.model-badge .type { font-family: 'Space Mono', monospace; font-size: 13px; font-weight: 700; color: var(--accent); }
+.model-badge .meta { color: var(--muted); margin-top: 4px; }
+
+/* ── Sliders ── */
+.sliders-wrap { display: flex; flex-direction: column; gap: 18px; }
+.slider-item { display: flex; flex-direction: column; gap: 6px; }
+.slider-header { display: flex; justify-content: space-between; align-items: center; }
+.slider-name { font-size: 12px; font-weight: 600; }
+.slider-val {
+  font-family: 'Space Mono', monospace;
+  font-size: 12px; font-weight: 700;
+  padding: 2px 8px; border-radius: 5px;
+  min-width: 60px; text-align: center;
+  border: none; background: var(--surface2);
+  color: var(--text); cursor: pointer;
+}
+input[type=range] {
+  width: 100%; height: 5px; border-radius: 3px;
+  outline: none; cursor: pointer; -webkit-appearance: none;
+  background: var(--surface2);
+}
+input[type=range]::-webkit-slider-thumb {
+  -webkit-appearance: none; width: 16px; height: 16px;
+  border-radius: 50%; background: var(--accent);
+  border: 2px solid var(--bg); box-shadow: 0 0 6px rgba(249,115,22,0.4);
+}
+
+/* ── Predict Button ── */
+.predict-btn {
+  width: 100%; padding: 12px;
+  background: linear-gradient(135deg, var(--accent), #fb923c);
+  color: #fff; border: none; border-radius: 10px;
+  font-size: 14px; font-weight: 700; cursor: pointer;
+  font-family: 'Noto Sans KR', sans-serif;
+  transition: all 0.2s;
+  box-shadow: 0 4px 16px rgba(249,115,22,0.3);
+}
+.predict-btn:hover { transform: translateY(-1px); box-shadow: 0 6px 20px rgba(249,115,22,0.4); }
+.predict-btn:active { transform: translateY(0); }
+.predict-btn:disabled { opacity: 0.4; cursor: not-allowed; transform: none; }
+
+/* ── Cards ── */
+.card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 20px; }
+.card-title {
+  font-size: 11px; font-weight: 700; text-transform: uppercase;
+  letter-spacing: 0.08em; color: var(--muted); margin-bottom: 16px;
+  display: flex; align-items: center; gap: 8px;
+}
+.card-title::before { content:''; display:inline-block; width:3px; height:13px; background:var(--accent); border-radius:2px; }
+
+/* ── Result ── */
+.result-card {
+  background: linear-gradient(135deg, #1a0f00, #1a1400, #161b22);
+  border: 1px solid rgba(249,115,22,0.25);
+  border-radius: 14px; padding: 28px; text-align: center;
+}
+.result-label { font-size: 11px; color: var(--muted); letter-spacing: 0.1em; text-transform: uppercase; }
+.result-value {
+  font-family: 'Space Mono', monospace;
+  font-size: 52px; font-weight: 700; color: var(--accent);
+  line-height: 1.1; margin: 6px 0;
+  text-shadow: 0 0 24px rgba(249,115,22,0.35);
+  transition: all 0.35s cubic-bezier(0.34,1.56,0.64,1);
+}
+.result-unit { font-size: 13px; color: var(--muted); }
+.result-bar { margin-top: 14px; height: 5px; background: var(--surface2); border-radius: 3px; overflow: hidden; }
+.result-bar-fill { height: 100%; background: linear-gradient(90deg, var(--accent), #fb923c); border-radius: 3px; transition: width 0.4s ease; width: 0%; }
+.result-range { display: flex; justify-content: space-between; margin-top: 4px; font-size: 10px; color: var(--muted); font-family: monospace; }
+
+/* ── Top row ── */
+.top-row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+@media (max-width: 600px) { .top-row { grid-template-columns: 1fr; } }
+
+/* ── Feature Importance ── */
+.fi-list { display: flex; flex-direction: column; gap: 10px; }
+.fi-row { display: flex; align-items: center; gap: 10px; }
+.fi-name { font-family: 'Space Mono', monospace; font-size: 11px; width: 90px; flex-shrink: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fi-bar-bg { flex: 1; background: var(--surface2); border-radius: 3px; height: 7px; overflow: hidden; }
+.fi-bar-fg { height: 100%; border-radius: 3px; transition: width 0.6s ease; }
+.fi-pct { font-family: monospace; font-size: 11px; width: 38px; text-align: right; color: var(--muted); }
+
+/* ── Chart ── */
+.chart-tabs { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 14px; }
+.tab { padding: 5px 12px; border: 1px solid var(--border); background: var(--surface2); color: var(--muted); border-radius: 5px; cursor: pointer; font-size: 11px; font-family: 'Space Mono', monospace; transition: all 0.15s; }
+.tab:hover { color: var(--text); }
+.tab.active { border-color: var(--accent); background: rgba(249,115,22,0.12); color: var(--accent); }
+.chart-panel { display: none; }
+.chart-panel.active { display: block; }
+.chart-wrap { height: 230px; position: relative; }
+.chart-hint { font-size: 10px; color: var(--muted); margin-top: 6px; }
+
+/* ── Empty / loading states ── */
+.empty { text-align: center; padding: 60px 20px; color: var(--muted); }
+.empty-icon { font-size: 40px; margin-bottom: 12px; }
+.empty p { font-size: 13px; }
+.spinner { display: inline-block; width: 18px; height: 18px; border: 2px solid rgba(255,255,255,0.3); border-top-color: #fff; border-radius: 50%; animation: spin 0.7s linear infinite; vertical-align: middle; margin-right: 6px; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* ── Notifications ── */
+.notif { position: fixed; bottom: 20px; right: 20px; background: #1f2937; border: 1px solid var(--border); border-radius: 8px; padding: 10px 16px; font-size: 12px; opacity: 0; pointer-events: none; transition: opacity 0.3s; z-index: 999; }
+.notif.show { opacity: 1; }
+.notif.err { border-color: #ef4444; color: #fca5a5; }
+.notif.ok  { border-color: var(--green); color: #6ee7b7; }
+</style>
+</head>
+<body>
+
+<div class="app">
+
+  <!-- ══════════ SIDEBAR ══════════ -->
+  <aside class="sidebar">
+    <div class="logo">
+      <div class="logo-icon">🔬</div>
+      <div>
+        <h1>Orange3 Predictor</h1>
+        <p>pkcls 모델 업로드 → 실시간 예측</p>
+      </div>
+    </div>
+
+    <!-- Upload -->
+    <div class="upload-zone" id="uploadZone">
+      <input type="file" id="fileInput" accept=".pkcls">
+      <div class="upload-icon">📂</div>
+      <h3>.pkcls 파일 업로드</h3>
+      <p>클릭하거나 드래그 앤 드롭</p>
+    </div>
+
+    <!-- Model info badge -->
+    <div class="model-badge" id="modelBadge">
+      <div class="type" id="modelType">—</div>
+      <div class="meta" id="modelMeta">—</div>
+    </div>
+
+    <!-- Sliders (동적 생성) -->
+    <div class="sliders-wrap" id="slidersWrap">
+      <div style="color:var(--muted);font-size:12px;text-align:center;padding:12px 0">
+        모델을 먼저 업로드하세요
+      </div>
+    </div>
+
+    <!-- Predict button -->
+    <button class="predict-btn" id="predictBtn" disabled onclick="runPredict()">
+      예측하기
+    </button>
+  </aside>
+
+  <!-- ══════════ MAIN ══════════ -->
+  <main class="main">
+
+    <!-- Empty state -->
+    <div class="empty" id="emptyState">
+      <div class="empty-icon">🏠</div>
+      <p>왼쪽에서 .pkcls 파일을 업로드하면<br>자동으로 슬라이더와 차트가 생성됩니다.</p>
+      <p style="margin-top:8px;font-size:11px;color:#555">Random Forest, Linear Regression, kNN, SVM, Gradient Boosting 등 지원</p>
+    </div>
+
+    <!-- Result + FI (숨김 → 업로드 후 표시) -->
+    <div id="resultSection" style="display:none">
+      <div class="top-row">
+        <div class="result-card">
+          <div class="result-label" id="targetLabel">예측값</div>
+          <div class="result-value" id="resultVal">—</div>
+          <div class="result-unit" id="resultUnit"></div>
+          <div class="result-bar"><div class="result-bar-fill" id="resultBar"></div></div>
+          <div class="result-range" id="resultRange"></div>
+        </div>
+
+        <div class="card">
+          <div class="card-title">Feature Importance</div>
+          <div class="fi-list" id="fiList">
+            <div style="color:var(--muted);font-size:12px">계산 중...</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- PD Curves -->
+      <div class="card">
+        <div class="card-title">부분 의존도 곡선 (PD Curve)</div>
+        <div class="chart-tabs" id="chartTabs"></div>
+        <div id="chartPanels"></div>
+      </div>
+    </div>
+
+  </main>
+</div>
+
+<div class="notif" id="notif"></div>
+
+<script>
+// ═══════════════════════════════════════════
+// State
+// ═══════════════════════════════════════════
+let state = {
+  modelB64:   null,   // base64 pkcls
+  features:   [],
+  target:     '',
+  modelType:  '',
+  fi:         null,
+  pdCurves:   {},
+  medians:    [],
+  predMin:    5,
+  predMax:    50,
+  charts:     {},
+  activeTab:  null,
+};
+
+const API = '';   // Vercel: 같은 origin의 /api/*
+
+// ═══════════════════════════════════════════
+// Upload
+// ═══════════════════════════════════════════
+const fileInput   = document.getElementById('fileInput');
+const uploadZone  = document.getElementById('uploadZone');
+
+fileInput.addEventListener('change', e => handleFile(e.target.files[0]));
+uploadZone.addEventListener('dragover', e => { e.preventDefault(); uploadZone.classList.add('drag'); });
+uploadZone.addEventListener('dragleave', () => uploadZone.classList.remove('drag'));
+uploadZone.addEventListener('drop', e => { e.preventDefault(); uploadZone.classList.remove('drag'); handleFile(e.dataTransfer.files[0]); });
+
+async function handleFile(file) {
+  if (!file) return;
+  if (!file.name.endsWith('.pkcls')) { showNotif('pkcls 파일만 지원합니다.', 'err'); return; }
+
+  // base64 저장
+  const buf = await file.arrayBuffer();
+  const bytes = new Uint8Array(buf);
+  let binary = '';
+  bytes.forEach(b => binary += String.fromCharCode(b));
+  state.modelB64 = btoa(binary);
+
+  // 서버에 분석 요청
+  const btn = document.getElementById('predictBtn');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span>분석 중...';
+
+  const formData = new FormData();
+  formData.append('file', file);
+
+  try {
+    const res  = await fetch(`${API}/api/upload`, { method: 'POST', body: formData });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || '서버 오류');
+    applyModelData(data);
+    showNotif(`✓ ${data.model_type} 로드 완료 (${data.n_features}개 feature)`, 'ok');
+  } catch (err) {
+    showNotif('업로드 실패: ' + err.message, 'err');
+    btn.disabled = false;
+    btn.innerHTML = '예측하기';
+  }
+}
+
+// ═══════════════════════════════════════════
+// Apply model metadata → build UI
+// ═══════════════════════════════════════════
+const PALETTE = [
+  '#f97316','#3b82f6','#10b981','#a855f7',
+  '#ec4899','#14b8a6','#f59e0b','#ef4444',
+];
+
+function applyModelData(data) {
+  state.features  = data.features;
+  state.target    = data.target;
+  state.modelType = data.model_type;
+  state.fi        = data.feature_importances;
+  state.pdCurves  = data.pd_curves || {};
+  state.medians   = data.medians || data.features.map(() => 1.0);
+
+  // sidebar badge
+  const badge = document.getElementById('modelBadge');
+  badge.classList.add('show');
+  document.getElementById('modelType').textContent = data.model_type;
+  document.getElementById('modelMeta').textContent =
+    `${data.n_features}개 입력 변수 → ${data.target} 예측`;
+
+  // upload zone
+  uploadZone.classList.add('loaded');
+  uploadZone.querySelector('h3').textContent = '✓ ' + (state.modelType);
+  uploadZone.querySelector('p').textContent  = data.features.length + '개 feature 감지됨';
+
+  // target label
+  document.getElementById('targetLabel').textContent = `예측: ${data.target}`;
+  document.getElementById('resultUnit').textContent  = '';
+
+  // build sliders
+  buildSliders();
+
+  // build feature importance
+  buildFI();
+
+  // build PD charts
+  buildCharts();
+
+  // show result section
+  document.getElementById('emptyState').style.display = 'none';
+  document.getElementById('resultSection').style.display = 'block';
+
+  // enable predict
+  const btn = document.getElementById('predictBtn');
+  btn.disabled = false;
+  btn.innerHTML = '예측하기';
+
+  // auto-run
+  runPredict();
+}
+
+// ═══════════════════════════════════════════
+// Sliders
+// ═══════════════════════════════════════════
+function buildSliders() {
+  const wrap = document.getElementById('slidersWrap');
+  wrap.innerHTML = '';
+  state.features.forEach((feat, i) => {
+    const med   = state.medians[i] || 1.0;
+    const lo    = parseFloat((med * 0.2).toFixed(3));
+    const hi    = parseFloat((med * 3.0).toFixed(3));
+    const step  = parseFloat(((hi - lo) / 100).toFixed(4));
+    const color = PALETTE[i % PALETTE.length];
+
+    const div = document.createElement('div');
+    div.className = 'slider-item';
+    div.innerHTML = `
+      <div class="slider-header">
+        <div class="slider-name" style="color:${color}">${feat}</div>
+        <input type="number" class="slider-val" id="val-${i}"
+          value="${med.toFixed(3)}" step="${step}" style="color:${color}">
+      </div>
+      <input type="range" id="slider-${i}"
+        min="${lo}" max="${hi}" step="${step}" value="${med}"
+        style="accent-color:${color}">
+    `;
+    wrap.appendChild(div);
+
+    const slider  = div.querySelector(`#slider-${i}`);
+    const numInp  = div.querySelector(`#val-${i}`);
+
+    slider.addEventListener('input', () => {
+      numInp.value = parseFloat(slider.value).toFixed(3);
+      updateMarker(i, parseFloat(slider.value));
+    });
+    numInp.addEventListener('change', () => {
+      const v = parseFloat(numInp.value);
+      slider.value = v;
+      updateMarker(i, v);
+    });
+  });
+}
+
+function getValues() {
+  return state.features.map((_, i) => parseFloat(document.getElementById('val-' + i)?.value || 0));
+}
+
+// ═══════════════════════════════════════════
+// Feature Importance
+// ═══════════════════════════════════════════
+function buildFI() {
+  const list = document.getElementById('fiList');
+  list.innerHTML = '';
+  if (!state.fi) {
+    list.innerHTML = '<div style="color:var(--muted);font-size:12px">이 모델은 feature importance를 제공하지 않습니다.</div>';
+    return;
+  }
+  const sorted = state.features
+    .map((f, i) => ({ f, v: state.fi[i] || 0 }))
+    .sort((a, b) => b.v - a.v);
+  const max = sorted[0].v || 1;
+
+  sorted.forEach(({ f, v }, i) => {
+    const color = PALETTE[state.features.indexOf(f) % PALETTE.length];
+    const pct   = (v / max * 100).toFixed(1);
+    const row   = document.createElement('div');
+    row.className = 'fi-row';
+    row.innerHTML = `
+      <div class="fi-name" title="${f}" style="color:${color}">${f}</div>
+      <div class="fi-bar-bg">
+        <div class="fi-bar-fg" style="background:${color};width:${pct}%"></div>
+      </div>
+      <div class="fi-pct">${(v * 100).toFixed(1)}%</div>
+    `;
+    list.appendChild(row);
+  });
+}
+
+// ═══════════════════════════════════════════
+// PD Charts
+// ═══════════════════════════════════════════
+const markerPlugin = {
+  id: 'vline',
+  afterDraw(chart) {
+    const x = chart._markerX;
+    if (x === undefined) return;
+    const xs = chart.scales.x, ys = chart.scales.y;
+    const px = xs.getPixelForValue(x);
+    if (px < xs.left || px > xs.right) return;
+    const ctx = chart.ctx;
+    ctx.save();
+    ctx.setLineDash([4, 4]);
+    ctx.strokeStyle = 'rgba(255,255,255,0.45)';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.moveTo(px, ys.top); ctx.lineTo(px, ys.bottom); ctx.stroke();
+    ctx.restore();
+  }
+};
+Chart.register(markerPlugin);
+
+function mkDataset(xs, ys, color) {
+  return [{
+    data: ys, borderColor: color,
+    backgroundColor: color.replace('rgb', 'rgba').replace(')', ',0.08)'),
+    borderWidth: 2.2, pointRadius: 0, fill: true, tension: 0.35,
+  }];
+}
+
+function chartOpts() {
+  return {
+    responsive: true, maintainAspectRatio: false,
+    animation: { duration: 0 },
+    plugins: { legend: { display: false }, tooltip: { callbacks: { label: c => `${c.parsed.y.toFixed(3)}` } } },
+    scales: {
+      x: { grid: { color: 'rgba(255,255,255,0.04)' }, ticks: { color: '#8b949e', maxTicksLimit: 7, font: { family: 'Space Mono', size: 10 } } },
+      y: { grid: { color: 'rgba(255,255,255,0.04)' }, ticks: { color: '#8b949e', font: { family: 'Space Mono', size: 10 } } },
+    }
+  };
+}
+
+function buildCharts() {
+  // destroy old
+  Object.values(state.charts).forEach(c => c.destroy());
+  state.charts = {};
+
+  const tabs   = document.getElementById('chartTabs');
+  const panels = document.getElementById('chartPanels');
+  tabs.innerHTML = '';
+  panels.innerHTML = '';
+
+  state.features.forEach((feat, i) => {
+    const color  = PALETTE[i % PALETTE.length];
+    const curve  = state.pdCurves[feat];
+    const isFirst = i === 0;
+
+    // tab
+    const tab = document.createElement('button');
+    tab.className = 'tab' + (isFirst ? ' active' : '');
+    tab.textContent = feat;
+    tab.style.borderColor = isFirst ? color : '';
+    tab.addEventListener('click', () => showTab(i));
+    tabs.appendChild(tab);
+
+    // panel
+    const panel = document.createElement('div');
+    panel.className = 'chart-panel' + (isFirst ? ' active' : '');
+    panel.id = 'panel-' + i;
+    panel.innerHTML = `
+      <div class="chart-wrap"><canvas id="canvas-${i}"></canvas></div>
+      <div class="chart-hint">다른 변수 중앙값 고정 · 세로선 = 현재 슬라이더 값</div>
+    `;
+    panels.appendChild(panel);
+
+    if (curve) {
+      const chart = new Chart(document.getElementById('canvas-' + i), {
+        type: 'line',
+        data: { labels: curve.x, datasets: mkDataset(curve.x, curve.y, color) },
+        options: chartOpts(),
+      });
+      chart._markerX = state.medians[i] || 0;
+      chart._featIdx = i;
+      state.charts[i] = chart;
+    }
+  });
+
+  state.activeTab = 0;
+}
+
+function showTab(idx) {
+  state.activeTab = idx;
+  document.querySelectorAll('.tab').forEach((t, i) => {
+    t.classList.toggle('active', i === idx);
+    if (i === idx) t.style.borderColor = PALETTE[i % PALETTE.length];
+    else t.style.borderColor = '';
+  });
+  document.querySelectorAll('.chart-panel').forEach((p, i) =>
+    p.classList.toggle('active', i === idx));
+}
+
+function updateMarker(featIdx, val) {
+  const chart = state.charts[featIdx];
+  if (chart) { chart._markerX = val; chart.update('none'); }
+}
+
+// ═══════════════════════════════════════════
+// Predict
+// ═══════════════════════════════════════════
+async function runPredict() {
+  if (!state.modelB64) return;
+  const values = getValues();
+  const btn = document.getElementById('predictBtn');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span>예측 중...';
+
+  try {
+    const res  = await fetch(`${API}/api/predict`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ values, model_b64: state.modelB64 }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail);
+
+    const pred = data.prediction;
+    document.getElementById('resultVal').textContent = pred.toFixed(3);
+
+    // bar (heuristic: use observed min/max from PD curves)
+    let allY = [];
+    Object.values(state.pdCurves).forEach(c => allY = allY.concat(c.y));
+    if (allY.length) {
+      state.predMin = Math.min(...allY);
+      state.predMax = Math.max(...allY);
+    }
+    const pct = Math.min(100, Math.max(0,
+      (pred - state.predMin) / (state.predMax - state.predMin) * 100));
+    document.getElementById('resultBar').style.width = pct.toFixed(1) + '%';
+    document.getElementById('resultRange').innerHTML =
+      `<span>${state.predMin.toFixed(1)}</span><span>${state.predMax.toFixed(1)}</span>`;
+
+  } catch (err) {
+    showNotif('예측 오류: ' + err.message, 'err');
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = '예측하기';
+  }
+}
+
+// ═══════════════════════════════════════════
+// Notifications
+// ═══════════════════════════════════════════
+let notifTimer;
+function showNotif(msg, type = 'ok') {
+  const el = document.getElementById('notif');
+  el.textContent = msg;
+  el.className = 'notif show ' + type;
+  clearTimeout(notifTimer);
+  notifTimer = setTimeout(() => el.classList.remove('show'), 3500);
+}
+</script>
+</body>
+</html>
