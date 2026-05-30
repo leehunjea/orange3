@@ -5,11 +5,11 @@ Orange3 .pkcls 파일을 받아 sklearn 모델을 추출하고 예측/분석 결
 """
 
 from __future__ import annotations
-import sys, types, pickle, io, json
+import sys, types, pickle, base64
 from typing import Any
 
 import numpy as np
-from fastapi import FastAPI, File, UploadFile, HTTPException
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
@@ -177,26 +177,35 @@ app.add_middleware(
 )
 
 
+class UploadRequest(BaseModel):
+    file_b64: str   # base64 인코딩된 pkcls 파일 내용
+    filename: str
+
+
 @app.post("/api/upload")
-async def upload_model(file: UploadFile = File(...)):
+async def upload_model(req: UploadRequest):
     """
-    .pkcls 파일 업로드 → 모델 분석 결과 반환.
-    반환: features, target, model_type, feature_importances, pd_curves, medians
+    .pkcls 파일을 JSON(base64)으로 받아 모델 분석 결과 반환.
+    multipart 대신 JSON을 사용해 Mangum/Vercel 바이너리 처리 이슈 우회.
     """
     import traceback
     try:
-        return await _upload_model_inner(file)
+        return await _upload_model_inner(req)
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(500, f"[DEBUG] {type(e).__name__}: {e} | {traceback.format_exc()[-300:]}")
+        raise HTTPException(500, f"[DEBUG] {type(e).__name__}: {e} | {traceback.format_exc()[-400:]}")
 
 
-async def _upload_model_inner(file: UploadFile):
-    if not file.filename.endswith(".pkcls"):
+async def _upload_model_inner(req: UploadRequest):
+    if not req.filename.endswith(".pkcls"):
         raise HTTPException(400, "pkcls 파일만 업로드 가능합니다.")
 
-    raw = await file.read()
+    try:
+        raw = base64.b64decode(req.file_b64)
+    except Exception:
+        raise HTTPException(400, "파일 디코딩 실패")
+
     if len(raw) > 50 * 1024 * 1024:  # 50MB 제한
         raise HTTPException(400, "파일이 너무 큽니다 (최대 50MB).")
 

@@ -297,16 +297,17 @@ async function handleFile(file) {
   bytes.forEach(b => binary += String.fromCharCode(b));
   state.modelB64 = btoa(binary);
 
-  // 서버에 분석 요청
+  // 서버에 분석 요청 (JSON/base64 방식 — multipart 바이너리 문제 우회)
   const btn = document.getElementById('predictBtn');
   btn.disabled = true;
   btn.innerHTML = '<span class="spinner"></span>분석 중...';
 
-  const formData = new FormData();
-  formData.append('file', file);
-
   try {
-    const res = await fetch(`${API}/api/upload`, { method: 'POST', body: formData });
+    const res = await fetch(`${API}/api/upload`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ file_b64: state.modelB64, filename: file.name }),
+    });
     let data;
     try {
       data = await res.json();
