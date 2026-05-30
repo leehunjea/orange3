@@ -354,6 +354,6 @@ async def sweep(req: PredictRequest):
     })
 
 
-# Vercel serverless entry point
-from mangum import Mangum
-handler = Mangum(app)
+# Vercel serverless entry point — ASGI app 직접 노출
+# (Mangum 불필요: @vercel/python 이 ASGI를 직접 처리)
+
