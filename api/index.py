@@ -99,14 +99,18 @@ _setup_orange_mocks()
 # ──────────────────────────────────────────────────────────────
 # sklearn 모델 추출 헬퍼
 # ──────────────────────────────────────────────────────────────
+def _is_real_sklearn(obj) -> bool:
+    """type 객체(mock class)가 아닌 실제 sklearn 모델인지 확인."""
+    return obj is not None and not isinstance(obj, type) and hasattr(obj, "predict")
+
+
 def extract_sklearn_model(orange_obj: Any):
     """Orange wrapper에서 sklearn estimator를 꺼냄."""
     for attr in ["skl_model", "model", "estimator", "clf", "reg"]:
         m = getattr(orange_obj, attr, None)
-        if m is not None and hasattr(m, "predict"):
+        if _is_real_sklearn(m):
             return m
-    # 자체가 sklearn 모델인 경우
-    if hasattr(orange_obj, "predict"):
+    if _is_real_sklearn(orange_obj):
         return orange_obj
     raise ValueError("sklearn 모델을 찾을 수 없습니다.")
 
@@ -199,35 +203,55 @@ async def upload_model(file: UploadFile = File(...)):
     except ValueError as e:
         raise HTTPException(422, str(e))
 
-    features   = get_feature_names(obj)
-    target     = get_target_name(obj)
-    mtype      = model_type_name(skl)
-    n_features = getattr(skl, "n_features_in_", len(features))
-
-    # feature 이름이 없으면 자동 생성
-    if len(features) != n_features:
-        features = [f"feature_{i}" for i in range(n_features)]
-
-    # 중앙값 추정 (모델 내부에 훈련 데이터 없으므로 구간 중앙값 사용)
-    medians = [1.0] * n_features  # fallback
-
-    # feature importance
-    fi = None
-    if hasattr(skl, "feature_importances_"):
-        fi = [round(float(v), 6) for v in skl.feature_importances_]
-    elif hasattr(skl, "coef_"):
-        coef = skl.coef_.ravel()
-        total = float(np.sum(np.abs(coef))) or 1.0
-        fi = [round(float(abs(c)) / total, 6) for c in coef]
-
-    # 안전한 테스트 예측으로 범위 추정
     try:
-        X_test = np.ones((1, n_features))
-        _ = skl.predict(X_test)
-        # PD curves: 각 feature를 0.5~2배 범위에서 sweep
-        curves = compute_pd_curves(skl, features, medians)
+        features   = get_feature_names(obj)
+        target     = get_target_name(obj)
+        mtype      = type(skl).__name__
+
+        # n_features_in_ 이 int가 아니면(mock 잔재) fallback
+        raw_nf     = getattr(skl, "n_features_in_", None)
+        n_features = raw_nf if isinstance(raw_nf, int) else max(len(features), 1)
+
+        # feature 이름이 없거나 개수가 다르면 자동 생성
+        if len(features) != n_features:
+            features = [f"feature_{i}" for i in range(n_features)]
+
+        medians = [1.0] * n_features
+
+        # feature importance
+        fi = None
+        fi_raw = getattr(skl, "feature_importances_", None)
+        if fi_raw is not None and not isinstance(fi_raw, type):
+            try:
+                fi = [round(float(v), 6) for v in fi_raw]
+            except Exception:
+                fi = None
+        if fi is None:
+            coef_raw = getattr(skl, "coef_", None)
+            if coef_raw is not None and not isinstance(coef_raw, type):
+                try:
+                    coef  = np.asarray(coef_raw).ravel()
+                    total = float(np.sum(np.abs(coef))) or 1.0
+                    fi    = [round(float(abs(c)) / total, 6) for c in coef]
+                except Exception:
+                    fi = None
+
+        # PD curves
+        try:
+            _ = skl.predict(np.ones((1, n_features)))
+            curves = compute_pd_curves(skl, features, medians)
+        except Exception:
+            curves = {}
+
+        # 모델 파라미터
+        try:
+            params = {k: str(v) for k, v in skl.get_params().items()} \
+                     if callable(getattr(skl, "get_params", None)) else {}
+        except Exception:
+            params = {}
+
     except Exception as e:
-        curves = {}
+        raise HTTPException(422, f"모델 분석 실패: {e}")
 
     return JSONResponse({
         "ok": True,
@@ -239,8 +263,7 @@ async def upload_model(file: UploadFile = File(...)):
         "feature_importances": fi,
         "pd_curves": curves,
         "medians": medians,
-        "params": {k: str(v) for k, v in
-                   (skl.get_params().items() if hasattr(skl, "get_params") else {})},
+        "params": params,
     })
 
 
