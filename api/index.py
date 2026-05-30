@@ -183,6 +183,16 @@ async def upload_model(file: UploadFile = File(...)):
     .pkcls 파일 업로드 → 모델 분석 결과 반환.
     반환: features, target, model_type, feature_importances, pd_curves, medians
     """
+    import traceback
+    try:
+        return await _upload_model_inner(file)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(500, f"[DEBUG] {type(e).__name__}: {e} | {traceback.format_exc()[-300:]}")
+
+
+async def _upload_model_inner(file: UploadFile):
     if not file.filename.endswith(".pkcls"):
         raise HTTPException(400, "pkcls 파일만 업로드 가능합니다.")
 
@@ -354,6 +364,14 @@ async def sweep(req: PredictRequest):
     })
 
 
-# Vercel serverless entry point — ASGI app 직접 노출
-# (Mangum 불필요: @vercel/python 이 ASGI를 직접 처리)
+
+@app.get("/api/ping")
+async def ping():
+    """함수 기동 확인용 헬스체크."""
+    return {"status": "ok", "python": sys.version[:6]}
+
+
+# Vercel serverless entry point
+from mangum import Mangum
+handler = Mangum(app, lifespan="off")
 
