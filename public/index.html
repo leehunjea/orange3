@@ -284,6 +284,12 @@ async function handleFile(file) {
   if (!file) return;
   if (!file.name.endsWith('.pkcls')) { showNotif('pkcls 파일만 지원합니다.', 'err'); return; }
 
+  // Vercel 무료 플랜 요청 크기 제한 경고 (4.5MB)
+  if (file.size > 4.5 * 1024 * 1024) {
+    showNotif(`파일이 너무 큽니다 (${(file.size/1024/1024).toFixed(1)}MB). Vercel 제한: 4.5MB`, 'err');
+    return;
+  }
+
   // base64 저장
   const buf = await file.arrayBuffer();
   const bytes = new Uint8Array(buf);
@@ -300,9 +306,14 @@ async function handleFile(file) {
   formData.append('file', file);
 
   try {
-    const res  = await fetch(`${API}/api/upload`, { method: 'POST', body: formData });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.detail || '서버 오류');
+    const res = await fetch(`${API}/api/upload`, { method: 'POST', body: formData });
+    let data;
+    try {
+      data = await res.json();
+    } catch {
+      throw new Error(`서버 오류 (HTTP ${res.status})`);
+    }
+    if (!res.ok) throw new Error(data.detail || `서버 오류 (HTTP ${res.status})`);
     applyModelData(data);
     showNotif(`✓ ${data.model_type} 로드 완료 (${data.n_features}개 feature)`, 'ok');
   } catch (err) {

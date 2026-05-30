@@ -27,6 +27,11 @@ def _setup_orange_mocks():
         def __init__(self, *a, **kw): pass
         def __call__(self, *a, **kw): return AutoAttr()
         def __getattr__(self, n): return AutoAttr
+        # pickle이 __setstate__ 를 호출할 때 실제 속성(skl_model 등)을 복원
+        def __setstate__(self, state):
+            if isinstance(state, dict):
+                self.__dict__.update(state)
+        def __iter__(self): return iter([])
         def __or__(self, o): return self
         def __ror__(self, o): return self
 
@@ -34,74 +39,60 @@ def _setup_orange_mocks():
     AutoAttr.Palette = AutoAttr
 
     class FakeMod(types.ModuleType):
+        """어떤 클래스 이름 접근도 AutoAttr로 반환 — 누락된 Orange 클래스 대응."""
         def __getattr__(self, _): return AutoAttr
 
-    # Orange 패키지 트리
-    orange_pkg = types.ModuleType("Orange")
-    orange_pkg.__path__ = []
-    sys.modules["Orange"] = orange_pkg
-
-    sub_mods = [
+    # Orange 패키지 트리 전체를 FakeMod로 등록
+    all_mods = [
+        "Orange",
+        "Orange.base",
         "Orange.data", "Orange.data.domain", "Orange.data.table",
-        "Orange.data.variable", "Orange.preprocess", "Orange.preprocess.impute",
+        "Orange.data.variable", "Orange.data.instance", "Orange.data.util",
+        "Orange.preprocess", "Orange.preprocess.impute",
+        "Orange.preprocess.preprocess", "Orange.preprocess.score",
         "Orange.regression", "Orange.regression.random_forest",
-        "Orange.classification", "Orange.modelling",
+        "Orange.regression.linear", "Orange.regression.base",
+        "Orange.classification", "Orange.classification.random_forest",
+        "Orange.classification.logistic_regression",
+        "Orange.modelling",
+        "Orange.ensemble", "Orange.ensemble.random_forest",
+        "Orange.evaluation",
+        "Orange.distance",
         "Orange.widgets", "Orange.widgets.utils",
+        "Orange.widgets.utils.colorpalettes",
+        "flags",
     ]
-    for nm in sub_mods:
-        m = types.ModuleType(nm); m.__path__ = []
+    for nm in all_mods:
+        m = FakeMod(nm); m.__path__ = []
         sys.modules[nm] = m
+
+    # 부모 모듈에 자식 모듈 연결
+    for nm in all_mods:
         parts = nm.split(".")
         if len(parts) > 1:
-            setattr(sys.modules[".".join(parts[:-1])], parts[-1], m)
+            parent = ".".join(parts[:-1])
+            if parent in sys.modules:
+                setattr(sys.modules[parent], parts[-1], sys.modules[nm])
 
-    # colorpalettes & flags 모듈: Palette.Flags 접근 처리
-    for nm in ["Orange.widgets.utils.colorpalettes", "flags"]:
-        fm = FakeMod(nm); fm.__path__ = []
-        sys.modules[nm] = fm
-        if "." in nm:
-            parts = nm.split(".")
-            setattr(sys.modules[".".join(parts[:-1])], parts[-1], fm)
-
-    # 변수 클래스
+    # 변수 클래스 (feature 이름 추출에 사용)
     class CV:
         def __init__(self, *a, **kw): self.name = a[0] if a else ""
         def __repr__(self): return self.name
-
-    def make_variable(*a, **kw):
-        v = CV(); v.name = a[0] if a else ""; return v
 
     class MockDomain:
         def __init__(self, *a, **kw):
             self.attributes = list(a[0]) if a else []
             self.class_var  = a[1] if len(a) > 1 else None
             self.metas      = kw.get("metas", [])
-
-    class MockRFR:
-        def __init__(self, *a, **kw): pass
+        def __setstate__(self, state):
+            self.__dict__.update(state)
 
     dv = sys.modules["Orange.data.variable"]
-    for attr, val in [("ContinuousVariable", CV), ("DiscreteVariable", CV),
-                      ("StringVariable", CV), ("make_variable", make_variable)]:
-        setattr(dv, attr, val)
+    for attr in ["ContinuousVariable", "DiscreteVariable", "StringVariable", "TimeVariable"]:
+        setattr(dv, attr, CV)
 
     sys.modules["Orange.data.domain"].Domain = MockDomain
     sys.modules["Orange.data.table"].Table   = AutoAttr
-
-    for a in ["Average", "ReplaceUnknowns", "ReplaceUnknownsModel"]:
-        setattr(sys.modules["Orange.preprocess.impute"], a, AutoAttr)
-
-    # 모든 Orange 회귀/분류 모델 mock
-    for mod_name in ["Orange.regression.random_forest",
-                     "Orange.regression", "Orange.classification", "Orange.modelling"]:
-        for cls_name in ["RandomForestRegressor","LinearRegressionLearner",
-                         "RidgeRegressionLearner","LassoRegressionLearner",
-                         "KNNRegressionLearner","SVRLearner",
-                         "GBRegressionLearner","NNRegressionLearner",
-                         "TreeRegressionLearner","SGDRegressionLearner",
-                         "RandomForestClassifier","LogisticRegressionLearner",
-                         "KNNLearner","SVMLearner","GBClassifier"]:
-            setattr(sys.modules[mod_name], cls_name, MockRFR)
 
 _setup_orange_mocks()
 
